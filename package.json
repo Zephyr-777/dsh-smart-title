@@ -1,7 +1,7 @@
 {
-  "name": "@weibaohui/dsh-smart-title",
-  "version": "0.1.9",
-  "description": "dsh 插件 · 会话智能标题：用 LLM 自动改写会话标题。每轮对话结束后对「用户消息 + 助手回答」的完整转写做一轮总结，标题跟随会话真实主题；首条消息即时出题、刷新节流与长会话冻结防无谓重刷、同题静默跳过、失败自动重试、用户手动改名不被覆盖、可选启动回填，标题模型可单独指定，设置页可视化配置。",
+  "name": "@zephyr-777/dsh-smart-title",
+  "version": "0.2.0",
+  "description": "dsh 插件 · 会话智能标题（合并版）：参考 dsh-session-autoname 的严格命名格式，用 LLM 生成 `MMDD｜类型｜主题` 形式的会话标题；首条消息即时出题、每轮结束按完整转写与工具痕迹重刷、占位标题自动升级、fork 分支后缀、启动回扫、刷新节流与长会话冻结、同题静默跳过、用户手动改名不被覆盖、标题模型可单独指定、设置页可视化配置。",
   "license": "MIT",
   "keywords": [
     "dsh",
@@ -35,7 +35,8 @@
     "src",
     "client",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "check": "node --check src/index.js && node --check client/index.js",
@@ -48,11 +49,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/weibaohui/dsh-smart-title.git"
+    "url": "git+https://github.com/Zephyr-777/dsh-smart-title.git"
   },
-  "homepage": "https://github.com/weibaohui/dsh-smart-title#readme",
+  "homepage": "https://github.com/Zephyr-777/dsh-smart-title#readme",
   "bugs": {
-    "url": "https://github.com/weibaohui/dsh-smart-title/issues"
+    "url": "https://github.com/Zephyr-777/dsh-smart-title/issues"
   },
   "publishConfig": {
     "access": "public"

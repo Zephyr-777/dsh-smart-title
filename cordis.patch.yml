@@ -1,18 +1,27 @@
-# dsh-plugin-dsh-smart-title bundle patch：插件经 `dsh plugin add` 安装时，
-# 由本 patch 把插件行注入宿主组合，并接管内建的 first-prompt 标题提供方。
+# @zephyr-777/dsh-smart-title bundle patch：插件经 `dsh plugin add` 安装时，
+# 由本 patch 把插件行注入宿主组合，并接管内建的标题提供方。
 #
 # 本插件是 HOST-PLANE：注册 ctx.sessionTitle 的标题提供方（注册表只允许一个，
 # 见 @deepseek-ai/dsh-session-title README），并订阅 session/event 的 turn/end
 # 做全对话总结刷新。它必须落在宿主组合里（insert），绝不进 agent preset。
 #
+# 0.2.0 合并了 @chi-hong22/dsh-session-autoname 的严格命名格式：标题固定为
+# `MMDD｜类型｜主题`（全角竖线 U+FF5C），首条消息先落占位标题、每轮结束按
+# 完整转写与工具调用摘要重刷、fork 会话补分支后缀、启动可回扫历史会话。
+#
 # 关键：base 组合默认挂了 dsh-session-title-first-prompt-llm（行 id
 # session-title-llm）。sessionTitle 服务只允许注册一个提供方，第二个 register
 # 会立即抛错导致插件加载失败（plugin tree failed to load）。因此必须先禁用
 # 内建行（同 id 覆盖，last write wins），卸载本插件时本层随之移除、内建自动恢复。
+#
+# ⚠️ 冲突提醒：@deepseek-ai/dsh-experimental-session-titles-bundle 与
+# @chi-hong22/dsh-session-autoname 同样会宣称 `all-prompts` / 占用同一个
+# sessionTitle 提供方槽位。三者（含本插件）**任意时刻只能启用一个**，
+# 否则第二个注册者会让 plugin tree 加载失败。迁移时请先把旧插件移除。
 
 - insert:
     - id: dsh-smart-title
-      name: '@weibaohui/dsh-smart-title'
+      name: '@zephyr-777/dsh-smart-title'
 
 # 内建 first-prompt-llm 提供方让位：同 id 覆盖禁用（对齐 dsh-continue 复用
 # compaction-basic 行的同款机制）。
