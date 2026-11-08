@@ -5,6 +5,27 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.3.0] - 2026-11-08
+
+标题不再每轮重写，改为**锚定会话首题**。
+
+### 新增
+- `anchorFirstTopic`（默认 `true`）：标题主题只从会话**第一个问题**推导。新增证据形态
+  `anchored_first_topic`——锚点是首轮提示词与首轮结果，后续轮次装进 `recent_turns`
+  （最多 3 轮）仅用于确认首题仍成立，不允许把主题换成最近一轮的具体动作。
+  提示词新增规则 10b 约束这一点。关闭本项退回旧的「整段对话尾部偏置」，主题会漂移。
+- `refreshEveryTurns`（默认 `5`）：只在第 N、2N、3N… 轮人类消息结束时复核标题，
+  而不是每轮重算。`1` = 每轮，`0` = 首轮出题后不再复核。
+- 新增纯函数 `anchoredData()`、`shouldReviewTurn()`，均从 `__internals` 导出。
+
+### 修复
+- 节奏闸不再拦住「首次正式命名」：尚未拿到正式标题的会话（占位还没升级、关掉了
+  `placeholderOnFirstPrompt`、或上次生成失败）在轮末立刻复核，且绕过节流——否则关掉
+  占位的会话要等到第 5 轮才有像样标题，或长时间停在回退标题上。用 `namedSessions`
+  记账（宿主重启后丢失，代价只是多复核一次）。
+- `refreshOnTurnEnd` 的语义澄清为「允许在轮末复核标题」，具体第几轮由
+  `refreshEveryTurns` 决定；设置页文案与提示同步更新。
+
 ## [0.2.0] - 2026-11-08
 
 与 `@chi-hong22/dsh-session-autoname` 合并后的首个版本。

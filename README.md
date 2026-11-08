@@ -80,7 +80,8 @@ MMDD｜类型｜主题
 - **自定义类型词表**：用逗号分隔替换内置十类
 - **标题模型可指定**：默认跟随会话当前模型，也可单独指定一条便宜/快速的 provider + model
 - **管理工具**：注册 `session_title_admin`，让模型可以主动查询/改写标题
-- **设置页可视化**：所有 25 项设置都在「设置 → 会话智能标题」里，保存即生效
+- **首题锚定**：标题主题取自会话第一个问题，不会随对话推进被最近一轮的动作带偏；按 `refreshEveryTurns`（默认 5 轮）节奏复核，而不是每轮重算
+- **设置页可视化**：所有 27 项设置都在「设置 → 会话智能标题」里，保存即生效
 
 ## 安装
 
@@ -90,17 +91,19 @@ dsh plugin --profile web add @zephyr-777/dsh-smart-title -w
 
 装完重启 `dsh web` 即生效，无需额外配置。安装时 patch 会自动禁用内置的 `session-title-llm` 行（`sessionTitle` 服务只允许一个提供方）；卸载本插件后内置提供方自动恢复。
 
-> 从 0.1.x（`@weibaohui/dsh-smart-title`）升级：先 `dsh plugin remove @weibaohui/dsh-smart-title`，再装新包 —— 包名变了，旧包不会自动让位。设置项有增删：`backfillOnStart` / `backfillMaxSessions` / `backfillIntervalMs` 换成了 `catchupOnStart` / `catchupMax` / `catchupDelayMs`，另有 8 个新键（`format`、`timeZone`、`namingTypes`、`topicMaxChars`、`placeholderOnFirstPrompt`、`upgradeForkTitles`、`catchupWindowHours`、`adminTool`），旧值不会迁移，重装后按上表重新配一遍。
+> 从 0.1.x（`@weibaohui/dsh-smart-title`）升级：先 `dsh plugin remove @weibaohui/dsh-smart-title`，再装新包 —— 包名变了，旧包不会自动让位。设置项有增删：`backfillOnStart` / `backfillMaxSessions` / `backfillIntervalMs` 换成了 `catchupOnStart` / `catchupMax` / `catchupDelayMs`，另有若干新键（`format`、`timeZone`、`namingTypes`、`topicMaxChars`、`placeholderOnFirstPrompt`、`upgradeForkTitles`、`catchupWindowHours`、`adminTool`，0.3.0 又加了 `anchorFirstTopic`、`refreshEveryTurns`），旧值不会迁移，重装后按上表重新配一遍。
 
 ## 设置项
 
-设置命名空间 `dsh-smart-title`，全部 25 项：
+设置命名空间 `dsh-smart-title`，全部 27 项：
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
 | `enabled` | bool | `true` | 总开关；关闭后完全退回内置标题行为 |
 | `includeAssistant` | bool | `true` | 转写里是否包含助手回答；关闭后只用用户消息出题，更省 token。仅 `format=plain` 时生效（strict 模式的证据折叠总要助手产出） |
-| `refreshOnTurnEnd` | bool | `true` | 每轮结束后按完整转写与工具痕迹重刷标题 |
+| `refreshOnTurnEnd` | bool | `true` | 允许在轮末复核标题；具体第几轮由 `refreshEveryTurns` 决定 |
+| `anchorFirstTopic` | bool | `true` | 标题主题只从会话**第一个问题**推导，后续轮次仅用于确认主题仍成立；关闭则按对话末端命名，主题会随对话漂移 |
+| `refreshEveryTurns` | number `0–1000` step 1 | `5` | 只在第 N、2N、3N… 轮人类消息结束时复核标题（1 = 每轮，0 = 不再复核）。首轮占位升级与 fork 升级不受此项限制 |
 | `placeholderOnFirstPrompt` | bool | `true` | 首条消息先用占位标题（类型「探索」），轮次结束后升级为正式标题 |
 | `upgradeForkTitles` | bool | `true` | 给 fork/分叉会话的标题补 ` (2)` 之类分支后缀 |
 | `excludeForks` | bool | `false` | 完全跳过 fork 子会话；与上一项互斥，开启本项则不再升级 fork 标题 |

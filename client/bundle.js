@@ -18,7 +18,7 @@ window.__ModuleLoader__.load({
      * plugin's HTTP API (GET /status, PUT /settings, GET /models) — the host
      * plugin owns the sessionTitle provider and the turn/end refresh loop.
      *
-     * 0.2.0 merges @chi-hong22/dsh-session-autoname: titles follow the strict
+     * 0.3.0 anchors titles to the session first question; 0.2.0 merged @chi-hong22/dsh-session-autoname: titles follow the strict
      * `MMDD｜类型｜主题` format (FULL-WIDTH bar U+FF5C) while keeping smart-title's
      * settings UI, refresh throttle and model routing.
      */
@@ -64,6 +64,7 @@ window.__ModuleLoader__.load({
       'enabled',
       'includeAssistant',
       'refreshOnTurnEnd',
+      'anchorFirstTopic',
       'placeholderOnFirstPrompt',
       'upgradeForkTitles',
       'excludeForks',
@@ -80,6 +81,7 @@ window.__ModuleLoader__.load({
       maxOutputTokens: [64, 8192, 64],
       timeoutMs: [1000, 600000, 1000],
       refreshMinIntervalMs: [0, 86400000, 1000],
+      refreshEveryTurns: [0, 1000, 1],
       refreshMaxTurns: [0, 10000, 1],
       catchupWindowHours: [0, 720, 1],
       catchupMax: [0, 50, 1],
@@ -97,6 +99,7 @@ window.__ModuleLoader__.load({
       enabled: true,
       includeAssistant: true,
       refreshOnTurnEnd: true,
+      anchorFirstTopic: true,
       placeholderOnFirstPrompt: true,
       upgradeForkTitles: true,
       excludeForks: false,
@@ -109,6 +112,7 @@ window.__ModuleLoader__.load({
       maxOutputTokens: 1024,
       timeoutMs: 90000,
       refreshMinIntervalMs: 120000,
+      refreshEveryTurns: 5,
       refreshMaxTurns: 100,
       catchupWindowHours: 48,
       catchupMax: 5,
@@ -136,7 +140,7 @@ window.__ModuleLoader__.load({
       armed: '已接管标题',
       notArmed: '未就绪',
       notArmedHint: 'LLM 加载失败，标题生成不可用（保持回退标题）',
-      hint: '标题格式固定为「MMDD｜类型｜主题」：首条消息即时出题，每轮结束后用完整转写与工具痕迹重刷，手动改过的标题不会被覆盖。',
+      hint: '标题格式固定为「MMDD｜类型｜主题」：主题锚定会话第一个问题，每 N 轮才复核一次，手动改过的标题不会被覆盖。',
 
       // 卡片标题
       secBasics: '基础',
@@ -148,7 +152,9 @@ window.__ModuleLoader__.load({
       // 字段标签
       'f_enabled': '启用会话智能标题',
       'f_includeAssistant': '转写包含助手回答',
-      'f_refreshOnTurnEnd': '每轮结束后刷新标题',
+      'f_refreshOnTurnEnd': '允许轮末复核标题',
+      'f_anchorFirstTopic': '标题锚定会话首题',
+      'f_refreshEveryTurns': '每隔几轮复核一次',
       'f_placeholderOnFirstPrompt': '首条消息先用占位标题',
       'f_upgradeForkTitles': '为 fork 会话标题补分支后缀',
       'f_excludeForks': '完全跳过 fork 子会话',
@@ -175,7 +181,9 @@ window.__ModuleLoader__.load({
       // 字段提示
       'h_enabled': '总开关；关闭后完全退回内置标题行为。',
       'h_includeAssistant': '仅 plain 格式生效；关闭后只用用户消息出题，更省 token。strict 格式的证据折叠总要助手产出。',
-      'h_refreshOnTurnEnd': '每轮对话结束后按完整转写与工具调用摘要重刷标题。',
+      'h_refreshOnTurnEnd': '关闭后只在首条消息出题，之后不再自动复核（手动改名仍保护）。',
+      'h_anchorFirstTopic': '开启（推荐）时主题只从会话第一个问题推导，后续轮次仅用于确认主题仍成立；关闭则按对话末端命名，主题会随对话漂移。',
+      'h_refreshEveryTurns': '只在第 N、2N、3N… 轮结束时复核标题（1 = 每轮，0 = 不再复核）。首轮占位升级与 fork 升级不受此项限制。默认 5。',
       'h_placeholderOnFirstPrompt': '首条消息先落「MMDD｜探索｜…」占位，轮次结束后升级为正式标题。',
       'h_upgradeForkTitles': 'fork/分叉会话的标题追加 ` (2)` 之类分支后缀。',
       'h_excludeForks': '与上一项互斥：开启本项则不再升级 fork 标题，完全不动子会话。',
@@ -232,7 +240,9 @@ window.__ModuleLoader__.load({
 
       'f_enabled': 'Enable smart session titles',
       'f_includeAssistant': 'Include assistant replies in transcript',
-      'f_refreshOnTurnEnd': 'Refresh the title after every turn',
+      'f_refreshOnTurnEnd': 'Allow turn-end title review',
+      'f_anchorFirstTopic': 'Anchor the title to the first question',
+      'f_refreshEveryTurns': 'Review every N turns',
       'f_placeholderOnFirstPrompt': 'Use a placeholder title on the first message',
       'f_upgradeForkTitles': 'Add a branch suffix to fork titles',
       'f_excludeForks': 'Skip fork child sessions entirely',
@@ -258,7 +268,9 @@ window.__ModuleLoader__.load({
 
       'h_enabled': 'Master switch; off falls back to the stock title behaviour.',
       'h_includeAssistant': 'Plain format only; off = user messages only (cheaper). Strict-format evidence folding always needs assistant output.',
-      'h_refreshOnTurnEnd': 'After each turn the title is rebuilt from the full transcript and tool-call traces.',
+      'h_refreshOnTurnEnd': 'Off keeps only the first-prompt title and never auto-reviews it again (manual renames stay pinned).',
+      'h_anchorFirstTopic': 'On (recommended): the topic is derived only from the session first question; later turns merely confirm it. Off names the conversation by its tail, so the topic drifts.',
+      'h_refreshEveryTurns': 'Review the title only when the human turn count hits N, 2N, 3N … (1 = every turn, 0 = never). Placeholder and fork upgrades bypass this. Default 5.',
       'h_placeholderOnFirstPrompt': 'The first message lands a `MMDD｜explore｜…` placeholder, upgraded once the turn ends.',
       'h_upgradeForkTitles': 'Forked sessions get a ` (2)` style branch suffix on their title.',
       'h_excludeForks': 'Mutually exclusive with the previous switch: on means fork titles are never upgraded at all.',
@@ -576,9 +588,11 @@ window.__ModuleLoader__.load({
               h('div', { className: 'dst-card' },
                 h('div', { className: 'dst-title' }, t('secRefresh')),
                 toggle('refreshOnTurnEnd'),
+                toggle('anchorFirstTopic'),
                 toggle('placeholderOnFirstPrompt'),
                 toggle('includeAssistant'),
                 h('div', { className: 'dst-row', style: { alignItems: 'flex-start' } },
+                  numField('refreshEveryTurns'),
                   numField('refreshMinIntervalMs'),
                   numField('refreshMaxTurns')),
                 h('div', { className: 'dst-dir', style: { maxWidth: 620 } }, t('sameTitleNote'))),

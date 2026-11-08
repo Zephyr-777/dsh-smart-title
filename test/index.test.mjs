@@ -41,7 +41,9 @@ const {
   titleStateOf,
   firstTurnData,
   conversationData,
+  anchoredData,
   digestOf,
+  shouldReviewTurn,
   // 合并新增：占位 / fork
   fallbackTitleOf,
   looksLikePlaceholder,
@@ -134,18 +136,19 @@ test('模块契约: Config 不是 null（null 会让设置页 describe() 抛错�
   assert.ok(ok, `Config 形状非法: ${String(Config)}`)
 })
 
-test('模块契约: DEFAULTS 是冻结的 25 键集合', async () => {
+test('模块契约: DEFAULTS 是冻结的 27 键集合', async () => {
   assert.equal(Object.isFrozen(DEFAULTS), true)
   const expected = [
     'enabled', 'format', 'timeZone', 'namingTypes', 'topicMaxChars',
     'targetWords', 'targetCjkCharacters', 'maxInputBytes', 'maxOutputTokens',
     'timeoutMs', 'provider', 'model', 'includeAssistant', 'refreshOnTurnEnd',
+    'anchorFirstTopic', 'refreshEveryTurns',
     'refreshMinIntervalMs', 'refreshMaxTurns', 'placeholderOnFirstPrompt',
     'excludeForks', 'upgradeForkTitles', 'excludeIdPrefixes', 'catchupOnStart',
     'catchupWindowHours', 'catchupMax', 'catchupDelayMs', 'adminTool'
   ]
   assert.deepEqual(Object.keys(DEFAULTS).sort(), expected.slice().sort())
-  assert.equal(Object.keys(DEFAULTS).length, 25)
+  assert.equal(Object.keys(DEFAULTS).length, 27)
   assert.equal(DEFAULTS.format, 'mmdd')
   assert.equal(DEFAULTS.timeZone, 'Asia/Shanghai')
   assert.equal(DEFAULTS.placeholderOnFirstPrompt, true)
@@ -164,7 +167,8 @@ test('模块契约: __internals 暴露合并后的全部纯函数', async () => 
     'charsOf', 'truncateBytes', 'parseNamingTypes', 'placeholderTypeOf',
     'comparableName', 'acceptPlainTitle', 'strictSystemPrompt', 'foldTurns',
     'toolSummary', 'textOfContent', 'titleStateOf', 'firstTurnData',
-    'conversationData', 'digestOf', 'ownEventsOf', 'fallbackTitleOf',
+    'conversationData', 'anchoredData', 'digestOf', 'shouldReviewTurn',
+    'ownEventsOf', 'fallbackTitleOf',
     'looksLikePlaceholder', 'isConversationSession', 'isForkedConversation',
     'forkSuffixOf', 'withForkSuffix', 'shouldUpgradeForkTitle', 'settingsSchema'
   ]
@@ -692,6 +696,14 @@ test('titleStateOf: 没有 title 事件 / 非数组 → undefined', async () => 
 
 const foldOf = (events) => foldTurns(events)
 
+/** 造一轮完整事件：turn/start + 用户消息 + 助手消息 + turn/end。 */
+const turnEvents = (prompt, outcome, n) => [
+  { type: 'turn/start', data: { turn: n } },
+  userMsg(prompt, n),
+  assistantMsg(outcome),
+  { type: 'turn/end', data: { turn: n, reason: { kind: 'completed' } } }
+]
+
 test('firstTurnData: 首轮已完成有产出 → scope=first_turn 摘要', async () => {
   const folds = foldOf([
     { type: 'turn/start', data: { turn: 1 } },
@@ -806,6 +818,87 @@ test('digestOf: 首轮未完成/无产出 → 退回整段对话', async () => {
     { type: 'turn/end', data: { turn: 2, reason: { kind: 'completed' } } }
   ])
   assert.equal(digestOf(folds, '0114', [], 6000).scope, 'whole_conversation')
+})
+
+// ── anchoredData / shouldReviewTurn（首题锚定 + 按轮复核节奏）─────────────
+
+test('anchoredData: 主题锚定首轮，后续轮次只作 recent_turns', async () => {
+  const folds = foldOf([
+    ...turnEvents('帮我修一下子路径反代的部署问题', '已修好子路径反代', 1),
+    ...turnEvents('顺手调一下侧边栏宽度', '侧边栏调好了2', 2),
+    ...turnEvents('再把字体调大一点', '字体已放大3', 3),
+    ...turnEvents('顺便换个配色', '配色已换4', 4),
+    ...turnEvents('再来点圆角', '圆角已加5', 5)
+  ])
+  const data = anchoredData(folds, '0114', ['proj'], 6000)
+  assert.equal(data.scope, 'anchored_first_topic')
+  assert.equal(data.date_mmdd, '0114')
+  assert.equal(data.turn_count, 5)
+  assert.equal(data.anchor_user_message, '帮我修一下子路径反代的部署问题')
+  assert.equal(data.anchor_assistant_message, '已修好子路径反代')
+  assert.equal(data.anchor_turn_end, 'completed')
+  // 后续轮次只能进 recent_turns，绝不能顶掉锚点
+  assert.deepEqual(data.recent_turns.map((t) => t.n), [3, 4, 5])
+  assert.equal(data.recent_turns[0].prompt, '再把字体调大一点')
+  assert.ok(!('first_user_message' in data), '锚点形态不应复用 first_turn 字段名')
+})
+
+test('anchoredData: recent_turns 最多 3 轮且跳过首轮', async () => {
+  const turns = []
+  for (let n = 1; n <= 10; n += 1) turns.push(...turnEvents(`第${n}问`, `第${n}答`, n))
+  const data = anchoredData(foldOf(turns), '0114', [], 6000)
+  assert.deepEqual(data.recent_turns.map((t) => t.n), [8, 9, 10])
+  assert.equal(data.recent_turns.every((t) => t.n !== 1), true)
+})
+
+test('anchoredData: 只有一轮会话时 recent_turns 为空但锚点仍在', async () => {
+  const data = anchoredData(foldOf(turnEvents('只有一问', '只有一答', 1)), '0114', [], 6000)
+  assert.deepEqual(data.recent_turns, [])
+  assert.equal(data.anchor_user_message, '只有一问')
+})
+
+test('anchoredData: 首轮未完成也照样取锚点（它的 end 如实记录）', async () => {
+  const folds = foldOf([
+    { type: 'turn/start', data: { turn: 1 } },
+    userMsg('初问', 1),
+    assistantMsg('半成品'),
+    { type: 'turn/end', data: { turn: 1, reason: { kind: 'interrupted' } } }
+  ])
+  const data = anchoredData(folds, '0114', [], 6000)
+  assert.equal(data.anchor_turn_end, 'interrupted')
+  assert.equal(data.anchor_assistant_message, '半成品')
+})
+
+test('anchoredData: 没有第 1 轮时抛错', async () => {
+  const folds = foldOf([{ type: 'turn/start', data: { turn: 2 } }, userMsg('从第二轮开始', 2)])
+  assert.throws(() => anchoredData(folds, '0114', [], 6000), /no first turn/u)
+})
+
+test('anchoredData: 预算过小回落到默认预算而不是崩掉', async () => {
+  const folds = foldOf([...turnEvents('长问题'.repeat(200), '长回答'.repeat(200), 1)])
+  const data = anchoredData(folds, '0114', [], 100)
+  assert.equal(data.scope, 'anchored_first_topic')
+  assert.ok(bytesOf(data.anchor_user_message) <= 2000)
+})
+
+test('shouldReviewTurn: 第 N、2N、3N 轮才复核', async () => {
+  const hits = [1, 2, 3, 4, 5, 6, 9, 10, 11, 15, 20].filter((n) => shouldReviewTurn(n, 5))
+  assert.deepEqual(hits, [5, 10, 15, 20])
+})
+
+test('shouldReviewTurn: every=1 每轮复核，every=0 永不复核', async () => {
+  assert.deepEqual([1, 2, 3].filter((n) => shouldReviewTurn(n, 1)), [1, 2, 3])
+  assert.equal(shouldReviewTurn(5, 0), false)
+  assert.equal(shouldReviewTurn(10, 0), false)
+})
+
+test('shouldReviewTurn: 非有限/null/负数一律不复核（不抛错）', async () => {
+  for (const bad of [null, undefined, NaN, Infinity, -5, '', '5']) {
+    assert.equal(shouldReviewTurn(5, bad), false, `shouldReviewTurn(5, ${String(bad)})`)
+  }
+  for (const bad of [null, undefined, NaN, Infinity, -1, '5']) {
+    assert.equal(shouldReviewTurn(bad, 5), false, `shouldReviewTurn(${String(bad)}, 5)`)
+  }
 })
 
 // ── ownEventsOf ───────────────────────────────────────────────────────────
@@ -1354,20 +1447,20 @@ test('sanitizePatch: 路由半配对两边都丢弃，成对保留；非对象�
   assert.deepEqual(sanitizePatch(undefined), {})
 })
 
-test('safeSettings: 只透出 DEFAULTS 键集合（25 键）', async () => {
+test('safeSettings: 只透出 DEFAULTS 键集合（27 键）', async () => {
   const out = safeSettings({ ...DEFAULTS, extra: 'x' })
   assert.deepEqual(Object.keys(out).sort(), Object.keys(DEFAULTS).sort())
   assert.equal(out.extra, undefined)
-  assert.equal(Object.keys(out).length, 25)
+  assert.equal(Object.keys(out).length, 27)
 })
 
 test('safeSettings: 缺失键透出 undefined（不漏内部状态）', async () => {
   const out = safeSettings({})
-  assert.equal(Object.keys(out).length, 25)
+  assert.equal(Object.keys(out).length, 27)
   assert.equal(out.format, undefined)
 })
 
-test('settingsSchema: 25 个 volatile 字段与 DEFAULTS 键一致', async () => {
+test('settingsSchema: 27 个 volatile 字段与 DEFAULTS 键一致', async () => {
   const chain = () => {
     const node = {}
     for (const k of ['default', 'volatile', 'min', 'max', 'step', 'description']) node[k] = () => node
@@ -1726,7 +1819,8 @@ test('apply: 节流——generate 后窗口内的 turn/end 不再 refresh；窗�
   const session = strictSession({ id: 's-throttle' })
   const a = makeMockCtx({ session })
   a.ctx.llm = { stream: streamOf(JSON.stringify({ title: `${TODAY_MMDD}｜功能｜实现插件` })) }
-  await apply(a.ctx, { refreshMinIntervalMs: 60000 })
+  // refreshEveryTurns:1 让本轮复核节奏闸放行，测试只隔离节流这一个变量。
+  await apply(a.ctx, { refreshMinIntervalMs: 60000, refreshEveryTurns: 1 })
   await a.registered[0].generate(generateArgs(session))
   a.emit(session, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
   await new Promise((r) => setTimeout(r, 10))
@@ -1735,7 +1829,7 @@ test('apply: 节流——generate 后窗口内的 turn/end 不再 refresh；窗�
   const session2 = strictSession({ id: 's-throttle2' })
   const b = makeMockCtx({ session: session2 })
   b.ctx.llm = { stream: streamOf(JSON.stringify({ title: `${TODAY_MMDD}｜功能｜实现插件` })) }
-  await apply(b.ctx, { refreshMinIntervalMs: 20 })
+  await apply(b.ctx, { refreshMinIntervalMs: 20, refreshEveryTurns: 1 })
   await b.registered[0].generate(generateArgs(session2))
   await new Promise((r) => setTimeout(r, 60))
   b.emit(session2, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
@@ -1761,6 +1855,39 @@ test('apply: 长会话冻结——用户消息超过 refreshMaxTurns 的 turn/en
   relaxed.emit(session, { type: 'turn/end', data: { reason: { kind: 'completed' } } })
   await new Promise((r) => setTimeout(r, 10))
   assert.deepEqual(relaxed.refreshCalls, ['s-long'])
+})
+
+test('apply: 首题锚定——首次命名不受节奏闸限制（placeholderOnFirstPrompt=false）', async () => {
+  // 关掉占位后，首条消息那次 generate 放弃出题，标题还停在上一次会话留下的状态。
+  // 节奏闸绝不能把这次「首次正式命名」也压到第 5 轮，否则会话长时间没有像样标题。
+  // 该会话当前轮还没有助手产出，strict 证据折叠不出可归类的结论。
+  const session = strictSession({
+    id: 's-first-name',
+    events: [
+      { type: 'turn/start', data: { turn: 1 } },
+      { type: 'user/message', seq: 7, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '帮我写个插件' }] } }
+    ]
+  })
+  const mock = makeMockCtx({ session, titleSource: 'fallback' })
+  await apply(mock.ctx, { placeholderOnFirstPrompt: false, refreshEveryTurns: 5 })
+  // 第一次 generate 抛错（没有可归类产出），会话仍然「未正式命名」
+  await assert.rejects(mock.registered[0].generate(generateArgs(session)))
+  mock.emit(session, { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } })
+  await new Promise((r) => setTimeout(r, 10))
+  assert.deepEqual(mock.refreshCalls, ['s-first-name'], '未正式命名的会话必须轮末立刻刷')
+})
+
+test('apply: 首题锚定——已正式命名的会话只在第 N 轮复核', async () => {
+  const session = strictSession({ id: 's-gate' })
+  const mock = makeMockCtx({ session, titleSource: 'fallback' })
+  mock.ctx.llm = { stream: streamOf(JSON.stringify({ title: `${TODAY_MMDD}｜功能｜实现插件` })) }
+  await apply(mock.ctx, { refreshEveryTurns: 5, refreshMinIntervalMs: 0 })
+  const gen = await mock.registered[0].generate(generateArgs(session))
+  assert.equal(gen.title, `${TODAY_MMDD}｜功能｜实现插件`)
+  // 第 1 轮结束后：已正式命名，1 % 5 !== 0 → 跳过
+  mock.emit(session, { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } })
+  await new Promise((r) => setTimeout(r, 10))
+  assert.deepEqual(mock.refreshCalls, [], '第 1 轮不该复核')
 })
 
 test('apply: 启动回扫 upgrade 不合规标题的会话（catchupOnStart）', async () => {
@@ -1849,7 +1976,7 @@ test('apply: GET /status 返回 armed、formats、builtinTypes 与设置全集',
   assert.equal(data.settings.format, DEFAULTS.format)
   assert.equal(data.settings.timeZone, DEFAULTS.timeZone)
   assert.equal(data.settings.topicMaxChars, DEFAULTS.topicMaxChars)
-  assert.equal(Object.keys(data.settings).length, 25)
+  assert.equal(Object.keys(data.settings).length, 27)
 })
 
 test('apply: PUT /settings 走白名单清洗并落库（夹取 + 半配对丢弃 + 未知键丢弃）', async () => {

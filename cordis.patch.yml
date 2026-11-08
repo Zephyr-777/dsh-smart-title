@@ -5,7 +5,7 @@
 # 见 @deepseek-ai/dsh-session-title README），并订阅 session/event 的 turn/end
 # 做全对话总结刷新。它必须落在宿主组合里（insert），绝不进 agent preset。
 #
-# 0.2.0 合并了 @chi-hong22/dsh-session-autoname 的严格命名格式：标题固定为
+# 0.3.0 把标题锚定到会话首题并引入按轮复核节奏；0.2.0 合并了 @chi-hong22/dsh-session-autoname 的严格命名格式：标题固定为
 # `MMDD｜类型｜主题`（全角竖线 U+FF5C），首条消息先落占位标题、每轮结束按
 # 完整转写与工具调用摘要重刷、fork 会话补分支后缀、启动可回扫历史会话。
 #
