@@ -109,7 +109,7 @@ dsh plugin --profile web add @zephyr-777/dsh-smart-title -w
 | `targetWords` | number `1–50` step 1 | `6` | 自由格式（`plain`）时的目标英文词数 |
 | `targetCjkCharacters` | number `2–60` step 1 | `12` | 自由格式（`plain`）时的目标中文字数 |
 | `topicMaxChars` | number `2–64` step 1 | `20` | 「主题」段最大字符数 |
-| `maxInputBytes` | number `512–200000` step 512 | `12000` | 送给模型的最大输入字节 |
+| `maxInputBytes` | number `512–200000` step 1 | `12000` | 送给模型的最大输入字节 |
 | `maxOutputTokens` | number `64–8192` step 64 | `1024` | 输出 token 上限 |
 | `timeoutMs` | number `1000–600000` step 1000 | `90000` | 单次生成超时（毫秒） |
 | `refreshMinIntervalMs` | number `0–86400000` step 1000 | `120000` | 两次刷新最小间隔（毫秒），0 = 不节流 |

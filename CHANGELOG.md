@@ -39,5 +39,8 @@
 ### 修复
 
 - 客户端的 `ButtonLite` 在 `@deepseek-ai/dsh-client-ui-primitives` 缺失时会解引用 `P.Button` 抛错；改为先判 `P && P.Button`，无 primitives 时回退到原生 `<button>`。
+- **Electron 桌面版下 LLM 不可用**：`hostCandidatePaths` 原来只探测 npm 全局安装路径（`<prefix>/lib/node_modules/@deepseek-ai/dsh/…`），而 DSH 桌面版把宿主包放在 `app.asar` 里，探测必然落空，插件静默降级成「LLM 标题调用不可用」。现在同时探测 `process.resourcesPath` 与 `execPath` 上跳推出的 Resources 目录下的 `app.asar` / `app.asar.unpacked`，两种安装形态都能解析。
+- **`maxInputBytes` 的 `step` 与默认值不自洽**：schema 写成 `.step(512)` 但默认值是 12000，cordis 校验失败并拒绝激活整个插件（`ValidationError: invalid config: $.maxInputBytes expected number multiple of 512 but got 12000`）。改回 `.step(1)`，与设置页和 README 对齐。
+- 补上两条 `settingsSchema` 回归测试：逐字段校验数字字段的 `min`/`max`/`step`，并断言每个数字默认值都是 `step` 的整数倍。原先的 fake schema 只记键名、不记约束值，所以 `step` 写错测不出来。
 EOF
 echo done

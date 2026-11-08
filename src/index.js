@@ -39,19 +39,46 @@
 
 const { pathToFileURL } = require('node:url')
 const { homedir } = require('node:os')
-const { join } = require('node:path')
+const { join, dirname } = require('node:path')
 
 // ── 依赖解析 ────────────────────────────────────────────────────────────────
 
-// 宿主 dsh 全局安装里的 vendored 副本路径。跟随 dsh bin 的真实位置：
-// process.execPath 可能指向捆绑的 node 运行时，不能从它推导；用
-// DSH_GLOBAL_PREFIX 与 ~/.local 兜底。路径形如
-// <prefix>/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/<pkg>/…
+// 宿主 dsh 里的 vendored 副本路径。两种安装形态都要覆盖：
+//
+//  1. npm 全局安装：<prefix>/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/<pkg>/…
+//     前缀取 DSH_GLOBAL_PREFIX，兜底 ~/.local。
+//  2. Electron 桌面应用（macOS/Windows/Linux 都是这个形态，最常见）：
+//     <resources>/app.asar/dsh/node_modules/@deepseek-ai/<pkg>/…
+//     resources 从 process.resourcesPath 取；拿不到时用 execPath 上跳推
+//     （<App>/Contents/MacOS/App → <App>/Contents/Resources）。asar 内路径
+//     由 Electron 的 fs shim 支持，require/import 都能读，所以这里不需要解包。
+//
+// 必须遍历全部候选再降级，不能只认一种：Electron 下 ~/.local 通常不存在，
+// 只探测它会让插件静默退化成"LLM 不可用"。
 function hostCandidatePaths(pkgName, rel) {
   const prefixes = [process.env.DSH_GLOBAL_PREFIX, homedir() + '/.local'].filter(Boolean)
-  return prefixes.map((prefix) =>
+  const candidates = prefixes.map((prefix) =>
     join(prefix, 'lib', 'node_modules', '@deepseek-ai', 'dsh', 'node_modules', '@deepseek-ai', pkgName, rel)
   )
+
+  const resources = []
+  if (typeof process.resourcesPath === 'string' && process.resourcesPath) {
+    resources.push(process.resourcesPath)
+  }
+  // execPath 可能指向捆绑的 node 运行时（Electron node 模式则指向 app 可执行文件），
+  // 两种都试：可执行文件同级、以及上跳两级。
+  for (const exe of [process.execPath]) {
+    if (typeof exe !== 'string' || !exe) continue
+    resources.push(join(dirname(exe), '..', 'Resources'))
+    resources.push(join(dirname(exe), '..', '..', 'Resources'))
+  }
+  for (const base of resources) {
+    candidates.push(join(base, 'app.asar', 'dsh', 'node_modules', '@deepseek-ai', pkgName, rel))
+    // 少数原生模块被解包到 app.asar.unpacked 同构目录下。
+    candidates.push(join(base, 'app.asar.unpacked', 'dsh', 'node_modules', '@deepseek-ai', pkgName, rel))
+  }
+
+  return [...new Set(candidates)]
 }
 
 const loadErrors = []
@@ -230,7 +257,7 @@ function settingsSchema(Schema) {
     topicMaxChars: Schema.number().step(1).min(2).max(64).default(DEFAULTS.topicMaxChars).volatile(),
     targetWords: Schema.number().step(1).min(1).max(50).default(DEFAULTS.targetWords).volatile(),
     targetCjkCharacters: Schema.number().step(1).min(2).max(60).default(DEFAULTS.targetCjkCharacters).volatile(),
-    maxInputBytes: Schema.number().step(512).min(512).max(200000).default(DEFAULTS.maxInputBytes).volatile(),
+    maxInputBytes: Schema.number().step(1).min(512).max(200000).default(DEFAULTS.maxInputBytes).volatile(),
     maxOutputTokens: Schema.number().step(64).min(64).max(8192).default(DEFAULTS.maxOutputTokens).volatile(),
     timeoutMs: Schema.number().step(1000).min(1000).max(600000).default(DEFAULTS.timeoutMs).volatile(),
     provider: Schema.string().default(DEFAULTS.provider).volatile(),

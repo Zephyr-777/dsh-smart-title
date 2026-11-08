@@ -66,7 +66,7 @@ const NUM_RANGES = {
   targetWords: [1, 50, 1],
   targetCjkCharacters: [2, 60, 1],
   topicMaxChars: [2, 64, 1],
-  maxInputBytes: [512, 200000, 512],
+  maxInputBytes: [512, 200000, 1],
   maxOutputTokens: [64, 8192, 64],
   timeoutMs: [1000, 600000, 1000],
   refreshMinIntervalMs: [0, 86400000, 1000],

@@ -1378,6 +1378,82 @@ test('settingsSchema: 25 个 volatile 字段与 DEFAULTS 键一致', async () =>
   assert.deepEqual(Object.keys(built.shape).sort(), Object.keys(DEFAULTS).sort())
 })
 
+test('settingsSchema: 数字字段的 min/max/step 与冻结契约一致', async () => {
+  // 记录型 fake schema：把每次链式调用的实参都留下来，才能验证约束值本身。
+  // （早先的 chain() 让 min/max/step 返回自身且不记参，导致 step 写错也测不出来）
+  const number = () => {
+    const node = { seen: {} }
+    const chain = (kind) => (...args) => {
+      node.seen[kind] = args[0]
+      return node
+    }
+    node.default = chain('default')
+    node.volatile = () => node
+    node.min = chain('min')
+    node.max = chain('max')
+    node.step = chain('step')
+    return node
+  }
+  const string = () => {
+    const node = {}
+    for (const k of ['default', 'volatile', 'min', 'max', 'step', 'description']) node[k] = () => node
+    return node
+  }
+  const fakeSchema = { object: (shape) => ({ shape }), boolean: string, string, number }
+  const shape = settingsSchema(fakeSchema).shape
+
+  const expected = {
+    topicMaxChars: [2, 64, 1],
+    targetWords: [1, 50, 1],
+    targetCjkCharacters: [2, 60, 1],
+    maxInputBytes: [512, 200000, 1],
+    maxOutputTokens: [64, 8192, 64],
+    timeoutMs: [1000, 600000, 1000],
+    refreshMinIntervalMs: [0, 86400000, 1000],
+    refreshMaxTurns: [0, 10000, 1],
+    catchupWindowHours: [0, 720, 1],
+    catchupMax: [0, 50, 1],
+    catchupDelayMs: [0, 600000, 500]
+  }
+  assert.deepEqual(Object.keys(expected).sort(), Object.keys(DEFAULTS).filter((k) => expected[k] !== undefined).sort())
+  for (const [key, [min, max, step]] of Object.entries(expected)) {
+    const seen = shape[key].seen
+    assert.deepEqual([seen.min, seen.max, seen.step], [min, max, step], `${key} 的 min/max/step 与契约不符`)
+    assert.equal(seen.default, DEFAULTS[key], `${key} 的 schema 默认值应与 DEFAULTS 一致`)
+  }
+})
+
+test('settingsSchema: 每个数字默认值都是 step 的整数倍（否则 cordis 拒绝启用整个插件）', async () => {
+  const number = () => {
+    const node = { seen: {} }
+    const chain = (kind) => (...args) => {
+      node.seen[kind] = args[0]
+      return node
+    }
+    node.default = chain('default')
+    node.volatile = () => node
+    node.min = chain('min')
+    node.max = chain('max')
+    node.step = chain('step')
+    return node
+  }
+  const string = () => {
+    const node = {}
+    for (const k of ['default', 'volatile', 'min', 'max', 'step', 'description']) node[k] = () => node
+    return node
+  }
+  const fakeSchema = { object: (shape) => ({ shape }), boolean: string, string, number }
+  const shape = settingsSchema(fakeSchema).shape
+
+  for (const [key, node] of Object.entries(shape)) {
+    if (!node.seen) continue // 布尔 / 字符串字段没有数值约束
+    const { default: def, min, max, step } = node.seen
+    if (step === undefined) continue
+    assert.equal(def % step, 0, `${key}: default ${def} 不是 step ${step} 的整数倍，cordis 会报 ValidationError`)
+    assert.ok(min <= def && def <= max, `${key}: default ${def} 不在 [${min}, ${max}] 内`)
+  }
+})
+
 test('settingsSchema: 没有 schemastery 时返回 null（只损失设置 UI）', async () => {
   assert.equal(settingsSchema(null), null)
   assert.equal(settingsSchema(undefined), null)
