@@ -45,6 +45,7 @@ const {
   digestOf,
   shouldReviewTurn,
   // 合并新增：占位 / fork
+  stripAtReferences,
   fallbackTitleOf,
   looksLikePlaceholder,
   isConversationSession,
@@ -168,7 +169,7 @@ test('模块契约: __internals 暴露合并后的全部纯函数', async () => 
     'comparableName', 'acceptPlainTitle', 'strictSystemPrompt', 'foldTurns',
     'toolSummary', 'textOfContent', 'titleStateOf', 'firstTurnData',
     'conversationData', 'anchoredData', 'digestOf', 'shouldReviewTurn',
-    'ownEventsOf', 'fallbackTitleOf',
+    'ownEventsOf', 'stripAtReferences', 'fallbackTitleOf',
     'looksLikePlaceholder', 'isConversationSession', 'isForkedConversation',
     'forkSuffixOf', 'withForkSuffix', 'shouldUpgradeForkTitle', 'settingsSchema'
   ]
@@ -971,6 +972,52 @@ test('fallbackTitleOf: 主题超过 topicMaxChars 时被 12 字切短后仍合�
   assert.ok(charsOf(topic) <= 8, `主题 ${charsOf(topic)} 字超过 8`)
 })
 
+// ── stripAtReferences / @ 附件引用不得污染占位主题 ────────────────────────
+// 回归：RC.5 实测会话里占位标题变成 `1123｜探索｜@/Users/meng`，因为客户端把
+// 拖进来的文件渲染成 `@/abs/path` 放在提示词最前面，而占位只取首行前 12 字。
+
+test('stripAtReferences: 剥掉行首的绝对路径引用', async () => {
+  assert.equal(stripAtReferences('@/Users/mengzh/Desktop/a.pdf 看看这个'), '看看这个')
+})
+
+test('stripAtReferences: 剥掉多个引用（空格分隔）', async () => {
+  assert.equal(
+    stripAtReferences('@/a/1.pdf @/a/2.docx 对比这两份'),
+    '对比这两份'
+  )
+})
+
+test('stripAtReferences: 剥掉带引号的路径（路径里有空格）', async () => {
+  assert.equal(stripAtReferences('@"带 空格 的路径.docx" 分析这个文档'), '分析这个文档')
+})
+
+test('stripAtReferences: 剥掉行中的引用，保留两侧文字', async () => {
+  assert.equal(stripAtReferences('看看 @/a/b.md 这个文件'), '看看 这个文件')
+})
+
+test('stripAtReferences: 无 @ 时原样返回（只去首尾空白）', async () => {
+  assert.equal(stripAtReferences('  普通提示词  '), '普通提示词')
+})
+
+test('stripAtReferences: 全是引用时返回空串', async () => {
+  assert.equal(stripAtReferences('@/a/b.pdf @/a/c.md'), '')
+})
+
+test('fallbackTitleOf: 首行只有 @ 引用时取下一行的真实诉求', async () => {
+  const prompt = '@/Users/mengzh/Desktop/大规模数据/01_题目.pdf @/Users/mengzh/Desktop/02_要求.docx\n查看我的作业要求，规划一下如何完成'
+  const out = fallbackTitleOf('1123', prompt, ['default-workspace'], TYPES, 20)
+  assert.equal(out, '1123｜探索｜查看我的作业要求，规划一')
+  assert.ok(!out.includes('@'), '不能残留 @ 引用')
+  assert.ok(!out.includes('Users'), '不能把路径当主题')
+  assert.equal(isCompliantTitle(out, '1123', TYPES), true)
+})
+
+test('fallbackTitleOf: 整段只有 @ 引用时退到会话记录', async () => {
+  const out = fallbackTitleOf('1123', '@/a/b.pdf', ['default-workspace'], TYPES, 20)
+  assert.equal(out, '1123｜探索｜会话记录')
+  assert.equal(isCompliantTitle(out, '1123', TYPES), true)
+})
+
 // ── looksLikePlaceholder ──────────────────────────────────────────────────
 
 test('looksLikePlaceholder: 占位形状为真，其它类型为假', async () => {
@@ -1731,6 +1778,48 @@ test('apply: 占位标题在 turn/end 时绕过节流升级一次', async () => 
   mock.emit(session, { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } })
   await new Promise((r) => setTimeout(r, 10))
   assert.deepEqual(mock.refreshCalls, ['s-upgrade'], '占位升级必须绕过节流')
+})
+
+// 回归：RC.5 只发 completed/blocked/aborted/error 四种 turn/end，用户按 Esc 很
+// 常见落在 aborted。若占位升级被「只认 completed」拦住，占位会永久留在侧栏，
+// 表现就是「插件又用不了了」。
+for (const kind of ['aborted', 'blocked']) {
+  test(`apply: 占位标题在 turn/end=${kind} 时同样升级（不只看 completed）`, async () => {
+    const session = strictSession({
+      id: `s-up-${kind}`,
+      events: [
+        { type: 'turn/start', data: { turn: 1 } },
+        { type: 'user/message', seq: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '帮我写个插件' }] } }
+      ]
+    })
+    const mock = makeMockCtx({ session, titleSource: 'none' })
+    mock.ctx.llm = { stream: async function* () { throw new Error('不该调用') } }
+    await apply(mock.ctx, { refreshMinIntervalMs: 600000 })
+    await mock.registered[0].generate(generateArgs(session, 1))
+    mock.emit(session, { type: 'turn/end', data: { turn: 1, reason: { kind } } })
+    await new Promise((r) => setTimeout(r, 10))
+    assert.deepEqual(mock.refreshCalls, [`s-up-${kind}`], `${kind} 也必须能升级占位`)
+  })
+}
+
+test('apply: 已正式命名的会话在 aborted 轮末不重算标题', async () => {
+  const session = strictSession({
+    id: 's-abort-named',
+    events: [
+      { type: 'turn/start', data: { turn: 1 } },
+      { type: 'user/message', seq: 1, data: { source: { kind: 'user' }, content: [{ type: 'text', text: '帮我写个插件' }] } },
+      { type: 'assistant/message', seq: 2, data: { message: { content: [{ type: 'text', text: '写好了' }] } } },
+      { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } }
+    ]
+  })
+  const mock = makeMockCtx({ session, titleSource: 'provider', titleText: `${TODAY_MMDD}｜功能｜实现插件` })
+  mock.ctx.llm = { stream: streamOf(JSON.stringify({ title: `${TODAY_MMDD}｜功能｜实现插件` })) }
+  await apply(mock.ctx, { refreshEveryTurns: 5 })
+  await mock.registered[0].generate(generateArgs(session, 1))
+  mock.refreshCalls.length = 0
+  mock.emit(session, { type: 'turn/end', data: { turn: 1, reason: { kind: 'aborted' } } })
+  await new Promise((r) => setTimeout(r, 10))
+  assert.deepEqual(mock.refreshCalls, [], 'aborted 轮次不该拿失败的结果重算主题')
 })
 
 test('apply: 模型返回非法 JSON 时退回占位标题（strict 不能留空标题）', async () => {

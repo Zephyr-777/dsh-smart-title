@@ -167,6 +167,12 @@ const MAX_TOPIC_BYTES = 60
 const FALLBACK_TOPIC_CHARS = 12
 /** 占位标题固定使用的类型（不在自定义词表里时退化为词表首项）。 */
 const PLACEHOLDER_TYPE = '探索'
+/**
+ * 提示词开头的 `@` 附件引用：`@/abs/path/file.pdf`、`@~/notes.md`、
+ * `@"带 空格 的路径.docx"`。客户端把拖进来的文件渲染成这种引用，它是**路径**
+ * 不是主题；直接取前 N 个字符会把标题变成 `1123｜探索｜@/Users/meng`。
+ */
+const AT_REFERENCE_PATTERN = /(?:^|\s)@"[^"]*"|(?:^|\s)@[^\s]*/gu
 
 /**
  * 客户端 fork 分支时给继承标题追加的分支计数：` (1)` / `（2）`。计数留在
@@ -1066,6 +1072,19 @@ function strictSystemPrompt(cfg, types, topicMaxChars) {
 // ── 纯函数：占位标题与 fork 分支 ───────────────────────────────────────────
 
 /**
+ * 剥掉提示词开头的 `@` 附件引用。拖拽/插入文件时客户端在提示词前面加上
+ * `@/abs/path`（可多个、可带引号），那是**路径不是主题**：不剥掉的话占位标题
+ * 会变成 `1123｜探索｜@/Users/meng`。整行只有引用时返回空串，让调用方退到
+ * 「会话记录」。
+ */
+function stripAtReferences(text) {
+  const raw = typeof text === 'string' ? text : String(text ?? '')
+  if (!raw.includes('@')) return raw.trim()
+  const stripped = raw.replace(AT_REFERENCE_PATTERN, ' ').replace(/\s+/gu, ' ').trim()
+  return stripped
+}
+
+/**
  * 确定性占位标题：会话首条提示词首行前 N 字，走与模型标题完全相同的校验，
  * 因此回退路径永远不可能破坏格式。模型什么都没产出、或本轮尚无已完成工作可
  * 归类时使用。
@@ -1073,11 +1092,16 @@ function strictSystemPrompt(cfg, types, topicMaxChars) {
 function fallbackTitleOf(mmdd, prompt, projects, types, topicMaxChars) {
   const allowed = Array.isArray(types) && types.length > 0 ? types : TYPES
   const type = placeholderTypeOf(allowed)
-  const line = String(prompt ?? '')
-    .split(/[\r\n]/u)[0]
-    .replace(/[｜|]/gu, ' ')
-    .replace(/\s+/gu, ' ')
-    .trim()
+  // 逐行取，直到剥掉 `@` 引用后还剩真实文字。用户拖文件进来时第一行往往只有
+  // `@/abs/path`，真正的诉求在第二行；只看第一行会退化成「会话记录」。
+  let line = ''
+  for (const raw of String(prompt ?? '').split(/[\r\n]/u)) {
+    const candidate = stripAtReferences(raw.replace(/[｜|]/gu, ' ').replace(/\s+/gu, ' ').trim())
+    if (candidate !== '') {
+      line = candidate
+      break
+    }
+  }
   const head = [...line].slice(0, FALLBACK_TOPIC_CHARS).join('').trim()
   for (const topic of [head, '会话记录']) {
     if (topic.length === 0) continue
@@ -1643,8 +1667,13 @@ async function applyAsync(ctx, config = {}) {
       const cfg = effective()
       if (cfg.enabled === false) return
       if (!isConversationSession(session && session.header)) return
-      if (reasonKind(event.data && event.data.reason) !== 'completed') return
       const sid = session.id
+      // 本轮结束的方式。RC.5 起宿主只发四种：completed / blocked / aborted / error，
+      // 而用户实际会话里 aborted（按 Esc）与 blocked 很常见。占位升级与 fork 升级
+      // **不能**只认 completed：那样一按 Esc 占位就永久留在侧栏，看起来像插件失效。
+      // 真正该问的是「本轮有没有产出可归类的助手工作」，由 digest 决策，而不是
+      // 结束原因。
+      const endKind = reasonKind(event.data && event.data.reason)
       // 占位标题的轮末升级：服务在建请求时调度，那时本轮还没有产出，必须在这里
       // 补一次，且必须绕过节流闸（否则刚生成的占位会把自己锁住两分钟）。
       if (pendingEvidence.has(sid)) {
@@ -1664,6 +1693,12 @@ async function applyAsync(ctx, config = {}) {
           refreshSession(session, 'fork', { bypassThrottle: true, allowPinned: true })
           return
         }
+      }
+      // 常规复核仍然只认正常收尾的轮次：aborted/blocked/error 的轮次结果不是
+      // 用户想要的最终状态，用它们重算主题会把标题钉在一次失败的尝试上。
+      if (endKind !== 'completed') {
+        trace('turn-end-skipped', { sessionId: sid, kind: endKind })
+        return
       }
       if (cfg.refreshOnTurnEnd === false) return
       // 按轮复核的节奏闸：首题锚定后，主题不该每轮重算。只在第 N、2N、3N… 轮
@@ -2109,6 +2144,7 @@ module.exports = {
     MAX_TOPIC_BYTES,
     FALLBACK_TOPIC_CHARS,
     PLACEHOLDER_TYPE,
+    AT_REFERENCE_PATTERN,
     FORK_SUFFIX_PATTERN,
     FORMATS,
     canonicalTimeZone,
@@ -2135,6 +2171,7 @@ module.exports = {
     anchoredData,
     shouldReviewTurn,
     // 合并新增：占位 / fork / 路由
+    stripAtReferences,
     fallbackTitleOf,
     looksLikePlaceholder,
     isConversationSession,

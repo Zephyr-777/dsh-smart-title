@@ -8,7 +8,9 @@
  * plugin's HTTP API (GET /status, PUT /settings, GET /models) — the host
  * plugin owns the sessionTitle provider and the turn/end refresh loop.
  *
- * 0.3.0 anchors titles to the session first question; 0.2.0 merged @chi-hong22/dsh-session-autoname: titles follow the strict
+ * 0.3.1 fixes placeholder titles that never upgraded on DSH RC.5 (turn/end reasons
+ * other than `completed`) and `@` attachment refs leaking into the topic; 0.3.0
+ * anchors titles to the session first question; 0.2.0 merged @chi-hong22/dsh-session-autoname: titles follow the strict
  * `MMDD｜类型｜主题` format (FULL-WIDTH bar U+FF5C) while keeping smart-title's
  * settings UI, refresh throttle and model routing.
  */

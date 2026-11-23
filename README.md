@@ -92,6 +92,8 @@ dsh plugin --profile web add @zephyr-777/dsh-smart-title -w
 装完重启 `dsh web` 即生效，无需额外配置。安装时 patch 会自动禁用内置的 `session-title-llm` 行（`sessionTitle` 服务只允许一个提供方）；卸载本插件后内置提供方自动恢复。
 
 > 从 0.1.x（`@weibaohui/dsh-smart-title`）升级：先 `dsh plugin remove @weibaohui/dsh-smart-title`，再装新包 —— 包名变了，旧包不会自动让位。设置项有增删：`backfillOnStart` / `backfillMaxSessions` / `backfillIntervalMs` 换成了 `catchupOnStart` / `catchupMax` / `catchupDelayMs`，另有若干新键（`format`、`timeZone`、`namingTypes`、`topicMaxChars`、`placeholderOnFirstPrompt`、`upgradeForkTitles`、`catchupWindowHours`、`adminTool`，0.3.0 又加了 `anchorFirstTopic`、`refreshEveryTurns`），旧值不会迁移，重装后按上表重新配一遍。
+>
+> 0.3.1 只修 bug（RC.5 占位标题不升级、`@` 附件引用污染主题），设置项无增删，直接覆盖升级即可。
 
 ## 设置项
 
